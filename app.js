@@ -3,6 +3,11 @@ require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const cloudinary = require('cloudinary').v2;
+const multer = require('multer');
+const path = require('path');
+// const AWS = require('aws-sdk');
+
 // for level 5 encryption
 const session = require("express-session")
 const passport = require("passport")
@@ -69,6 +74,7 @@ const userSchema = new mongoose.Schema({
 });
 const lecturerSchema = new mongoose.Schema({
     username: String, 
+    state: String, 
     firstName: String, 
     lastName: String, 
     middleName: String, 
@@ -78,7 +84,6 @@ const lecturerSchema = new mongoose.Schema({
     dateCreated: String,
     password: String,
     students: [String],
-    acceptanceLetterID: String,
 });
 const workDetailsSchema = new mongoose.Schema({
     studentID: String, 
@@ -100,23 +105,24 @@ const reportSchema = new mongoose.Schema({
     wednesday: String, 
     thursday: String, 
     friday: String,
+    week: String,
+    date: String,
+    timeStamp: String,
 });
 const acceptanceLetterSchema = new mongoose.Schema({
     studentID: String, 
-    monday: String, 
-    tuesday: String, 
-    wednesday: String, 
-    thursday: String, 
-    friday: String,
+    image: String
 });
 
 // for level 5 encryption
 userSchema.plugin(passportLocalMongoose)
+lecturerSchema.plugin(passportLocalMongoose)
 
 // for level 6 encryption
 userSchema.plugin(findOrCreate)
 
-// userSchema.plugin(passportLocalMongoose, {usernameQueryFields: ["username", "email"]})
+userSchema.plugin(passportLocalMongoose, {usernameQueryFields: ["username", "matricNumber"]})
+lecturerSchema.plugin(passportLocalMongoose, {usernameQueryFields: ["username"]})
 
 const User = mongoose.model("User", userSchema);
 const Lecturer = mongoose.model("Lecturer", lecturerSchema);
@@ -125,25 +131,73 @@ const Report = mongoose.model("Report", reportSchema);
 const WorkDatails = mongoose.model("WorkDatails", workDetailsSchema);
 
 // for level 5 encryption
-passport.use(User.createStrategy());
-passport.serializeUser(function(user, done) {
-    done(null, user._id);
-});
-
-passport.deserializeUser(function(id, done) {
-    User.findById(id, function(err, user) {
-        done(err, user);
+const userAuth = () => {
+    passport.use(User.createStrategy());
+    passport.serializeUser(function(user, done) {
+        done(null, user._id);
     });
+    
+    passport.deserializeUser(function(id, done) {
+        User.findById(id, function(err, user) {
+            done(err, user);
+        });
+    });
+
+}
+
+const lecturerAuth = () => {
+    passport.use(Lecturer.createStrategy());
+    passport.serializeUser(function(lecturer, done) {
+        done(null, lecturer._id);
+    });
+    
+    passport.deserializeUser(function(id, done) {
+        Lecturer.findById(id, function(err, lecturer) {
+            done(err, lecturer);
+        });
+    });
+
+}
+
+
+
+
+// Configuration 
+cloudinary.config({
+    cloud_name: process.env.CLOUDINARY_NAME,
+    api_key: process.env.CLOUDINARY_API_KEY,
+    api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
 
 
+// Configure Multer to parse FormData
+// const storage = multer.memoryStorage();
+const storage = multer.diskStorage({
+    destination: (req, file, callback) => {
+      callback(null, 'uploads/');
+    },
+    filename: (req, file, callback) => {
+      callback(null, Date.now() + path.extname(file.originalname));
+    }
+  });
+// const storage = multer.diskStorage({
+//   destination: function (req, file, cb) {
+//     console.log("🚀 ~ file: upload.ts:11 ~ file", process.cwd());
+//     cb(null, `${process.cwd()}/src/Images`);
+//   },
+//   filename: function (req, file, cb) {
+//     cb(null, file.fieldname + "-" + Date.now());
+//   },
+// });
+const upload = multer({ storage: storage });
 
 app.route("/student/register")
     .get((req, res) => {
         res.status(200).json({success: true, name: "username"})
     })
     .post((req, res) => {
+        userAuth()
         const { firstName, lastName, username, middleName, school, level, course, matricNumber, gender, password, phoneNumber, dateCreated} = req.body
         User.findOne({username: username}, (err, result) => {
             if(err) {
@@ -152,6 +206,7 @@ app.route("/student/register")
                 if(result) {
                     res.status(200).json({success: false, exists: true, name: req.body.username})
                 } else {
+
                     User.register(
                         {
                             username: username, 
@@ -194,7 +249,8 @@ app.route("/supervisor/register")
         res.status(200).json({success: true, name: "username"})
     })
     .post((req, res) => {
-        const { firstName, lastName, username, middleName, school, gender, password, phoneNumber, dateCreated} = req.body
+        lecturerAuth()
+        const { firstName, lastName, username, middleName, school, gender, password, phoneNumber, dateCreated, state} = req.body
         Lecturer.findOne({username: username}, (err, result) => {
             if(err) {
                 res.status(200).json({success: false, err: err, name: req.body.username})
@@ -205,6 +261,7 @@ app.route("/supervisor/register")
                     Lecturer.register(
                         {
                             username: username, 
+                            state: state, 
                             firstName: firstName, 
                             lastName: lastName, 
                             middleName: middleName, 
@@ -239,6 +296,7 @@ app.route("/student/login")
         res.render("login")
     })
     .post((req, res) => {
+        userAuth()
         const user = new User({
             username: req.body.username,
             password: req.body.password
@@ -249,7 +307,7 @@ app.route("/student/login")
                 res.status(200).json({success: false, err: err})
             } else {
                 passport.authenticate("local") (req, res, () => {
-                    User.findOne({username: req.body.username}, (err, result) => {
+                    User.findOne({matricNumber: req.body.username}, (err, result) => {
                         if(err) {
                             res.status(200).json({success: false, err: err, name: req.body.username})
                         } else {
@@ -267,6 +325,7 @@ app.route("/supervisor/login")
         res.render("login")
     })
     .post((req, res) => {
+        lecturerAuth()
         const lecturer = new Lecturer({
             username: req.body.username,
             password: req.body.password
@@ -321,11 +380,30 @@ app.route("/student/upload-details")
                             if(err) {
                                 res.status(200).json({success: false, err: err, studentID: studentID})
                             } else {
-                                WorkDatails.findOne({studentID: studentID}, (err, result) => {
+                                Lecturer.find({state: state}, (err, result0) => {
                                     if(err) {
-                                        res.status(200).json({success: false, err: err, name: studentID})
+                                        res.status(200).json({success: false, err: err, })
                                     } else {
-                                        res.status(200).json({success: true, details: result})
+                                        if(result0.length > 0) {
+                                            result0.sort((a, b) => a.students.length - b.students.length);
+                                            console.log(result0[0]);
+                                            User.updateOne({studentID: studentID}, {lecturerID: `${result0[0].lastName} ${result0[0].firstName}`}, (err, resultuser) => {
+                                                if(err) {
+                                                    console.log(resultuser);
+                                                    res.status(200).json({success: false, err: err, name: studentID})
+                                                } else {
+                                                    Lecturer.updateOne({_id: result0[0]._id}, { $push: { students: studentID }}, (err, result) => {
+                                                        if(err) {
+                                                            res.status(200).json({success: false, err: err, name: studentID})
+                                                        } else {
+                                                            res.status(200).json({success: true, message: "Successfully Updated", details: result})
+                                                        }
+                                                    })
+                                                }
+                                            })
+                                        } else {
+                                            res.status(200).json({success: true, message: "No lecturer found", details: result})
+                                        }
                                     }
                                 })
                             }
@@ -343,20 +421,44 @@ app.route("/student/upload-details")
                         resumptionDate: resumptionDate,
                         terminationDate: terminationDate,
                         assignedDepartment: assignedDepartment,
-                        jobDesc: jobDesc,
+                        jobDesc: jobDesc, 
                     }, (err, result) => {
                         if(err) {
                             res.status(200).json({success: false, err: err})
                         } else {
                             if(result) {
-                                res.status(200).json({success: true, details: result[0]})
+                                Lecturer.find({state: state}, (err, result0) => {
+                                    if(err) {
+                                        res.status(200).json({success: false, err: err, })
+                                    } else {
+                                        if(result0.length > 0) {
+                                            result0.sort((a, b) => a.students.length - b.students.length);
+                                            console.log(result0[0]);
+                                            User.updateOne({studentID: studentID}, {lecturerID: `${result0[0].lastName} ${result0[0].firstName}`}, (err, resultuser) => {
+                                                if(err) {
+                                                    res.status(200).json({success: false, err: err, name: studentID})
+                                                } else {
+                                                    console.log(resultuser);
+                                                    Lecturer.updateOne({_id: result0[0]._id}, { $push: { students: studentID }}, (err, result) => {
+                                                        if(err) {
+                                                            res.status(200).json({success: false, err: err, name: studentID})
+                                                        } else {
+                                                            res.status(200).json({success: true, message: "Successfully Updated", details: result})
+                                                        }
+                                                    })
+                                                }
+                                            })
+                                        } else {
+                                            res.status(200).json({success: true, message: "No lecturer found", details: result})
+                                        }
+                                    }
+                                })
                             }
                         }
                     })
                 }
             }
         })
-        
     });
 
 
@@ -366,8 +468,8 @@ app.route("/student/upload-report")
         res.render("login")
     })
     .post((req, res) => {
-        const { studentID, monday, tuesday, wednesday, thursday, friday, week, } = req.body
-        Report.findOne({studentID: studentID}, (err, result) => {
+        const { studentID, monday, tuesday, wednesday, thursday, friday, week, date, timeStamp} = req.body
+        Report.findOne({studentID: studentID, date: date, week: week }, (err, result) => {
             if(err) {
                 res.status(200).json({success: false, err: err})
             } else {
@@ -382,6 +484,8 @@ app.route("/student/upload-report")
                             thursday: thursday,
                             friday: friday,
                             week: week,
+                            date: date,
+                            timeStamp: timeStamp,
                         },
                         (err, result) => {
                             if(err) {
@@ -397,6 +501,7 @@ app.route("/student/upload-report")
                             }
                         }
                     )
+                    
                 } else {
                     Report.insertMany({
                         studentID: studentID,
@@ -406,6 +511,8 @@ app.route("/student/upload-report")
                         thursday: thursday,
                         friday: friday,
                         week: week,
+                        date: date,
+                        timeStamp: timeStamp,
                     }, (err, result) => {
                         if(err) {
                             res.status(200).json({success: false, err: err})
@@ -424,7 +531,7 @@ app.route("/student/upload-report")
 
 
 app.route("/student/profile")
-    .get((req, res) => {
+    .post((req, res) => {
         const { studentID } = req.body
         User.findOne({_id: studentID}, (err, result) => {
             if(err) {
@@ -444,16 +551,16 @@ app.route("/student/profile")
     });
 
 
-
-app.route("/student/reports")
-    .get((req, res) => {
+app.route("/student/company")
+    .post((req, res) => {
         const { studentID } = req.body
-        Report.findOne({studentID: studentID}, (err, result) => {
+        WorkDatails.findOne({studentID: studentID}, (err, result) => {
             if(err) {
                 res.status(200).json({success: false, err: err})
             } else {
+                console.log(req.body);
                 if(result) {
-                    res.status(200).json({success: true, user: result})
+                    res.status(200).json({success: true, details: result})
                 } else {
                     res.status(200).json({success: false, err: "Not found"})
 
@@ -462,6 +569,28 @@ app.route("/student/reports")
         })
     })
     .post((req, res) => {
+        
+    });
+
+
+
+app.route("/student/reports")
+    .post((req, res) => {
+        const { studentID } = req.body
+        Report.find({studentID: studentID}, (err, result) => {
+            if(err) {
+                res.status(200).json({success: false, err: err})
+            } else {
+                if(result) {
+                    res.status(200).json({success: true, data: result})
+                } else {
+                    res.status(200).json({success: false, err: "Not found"})
+
+                }
+            }
+        })
+    })
+    .get((req, res) => {
         
     });
 
@@ -485,6 +614,64 @@ app.route("/supervisor/profile")
     .post((req, res) => {
         
     });
+
+
+
+
+app.post('/upload-acceptance-letter', upload.single('file'), async (req, res) => {
+    console.log("start")
+    try {
+        const filePath = req.file.path;
+        const { secure_url } = await cloudinary.uploader.upload(filePath);
+        console.log(secure_url); // check the value of secure_url
+
+        const studentID = req.body.studentID;
+
+        AcceptanceLetter.findOne({studentID: studentID}, (err, result) => {
+            if(err) {
+                return res.status(200).json({success: false, err: err});
+            } else {
+                if(result) {
+                    AcceptanceLetter.updateOne(
+                        {studentID: studentID},
+                        {
+                            image: secure_url
+                        },
+                        (err, result) => {
+                            if(err) {
+                                return res.status(200).json({success: false, err: err, studentID: studentID});
+                            } else {
+                                AcceptanceLetter.findOne({studentID: studentID}, (err, result) => {
+                                    if(err) {
+                                        return res.status(200).json({success: false, err: err, name: studentID});
+                                    } else {
+                                        return res.status(200).json({success: true, details: result});
+                                    }
+                                });
+                            }
+                        });
+                }else{
+                    AcceptanceLetter.insertMany({
+                        studentID: studentID,
+                        image: secure_url                            
+                    }, (err, result) => {
+                        if(err) {
+                            return res.status(200).json({success: false, err: err});
+                        } else {
+                            if(result) {
+                                return res.status(200).json({success: true, details: result[0]});
+                            }
+                        }
+                    });
+                }                 
+            }
+        });
+    } catch (error) {
+        console.error('Failed to upload file and save URL to database', error);
+        return res.status(500).json({ message: 'Failed to upload file and save URL to database' });
+    }
+});
+    
 
 
 app.route("/update")
@@ -533,29 +720,7 @@ app.route("/update")
         })
     });
 
-app.post("/api/delete", (req, res) => {
-    
-    const { name, hitsNum } = req.body;
-    let hit;
-    User.findOne({username: req.body.username}, (err, result) => {
-        if(err) {
-            console.log(err);
-        } else {
-            if(result) {
-                result.hitsNum = result.hitsNum - 3
-                result.save(err => {
-                    if (err) {
-                        console.log("Could not update...");
-                        res.json({success: false, data: err})            
-                    } else {
-                        res.json({success: true, data: result})
-                    }
-                })
-                
-            }
-        }
-    })
-})
+
 
 
 
@@ -564,5 +729,5 @@ app.post("/api/delete", (req, res) => {
 
 port = process.env.PORT || 5000;
 app.listen(port, () => {
-    console.log("Server started on port " + port);
+    console.log("Server started on port " + port); 
 })
